@@ -35,12 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .unwrap();
 
     input_files.par_iter().try_for_each(|&input_file| {
-        process_jsonl_file(
-            input_file,
-            output_dir,
-            context_length,
-            Arc::clone(&tokenizer),
-        )
+        process_jsonl_file(input_file, output_dir, context_length, Arc::clone(&tokenizer))
     })?;
 
     Ok(())
@@ -77,9 +72,7 @@ fn process_jsonl_file(
         .par_bridge()
         .filter_map(|(i, line)| {
             if i % 1000 == 0 {
-                let elapsed = start_time.elapsed();
-                pb.set_message(format!("Processed {} lines in {:?}", i, elapsed));
-                pb.tick();
+                pb.set_message(format!("Processed {} lines", i));
             }
             line.ok()
                 .and_then(|l| serde_json::from_str(&l).ok())
@@ -90,14 +83,11 @@ fn process_jsonl_file(
     let total_time = start_time.elapsed();
     pb.finish_with_message(format!("Done processing in {:?}", total_time));
 
-    // Use default values if tokens are not found
     let bos_id = tokenizer.token_to_id("<|begin_of_text|>").unwrap_or(1);
     let eos_id = tokenizer.token_to_id("<|end_of_text|>").unwrap_or(2);
-    let separator_id = tokenizer
-        .token_to_id("<|reserved_special_token_2|>")
-        .unwrap_or(3);
+    let separator_id = tokenizer.token_to_id("<|reserved_special_token_2|>").unwrap_or(3);
 
-    let combined_tokenized = combine_tokenized_messages_greedy(
+    let combined_tokenized = combine_tokenized_messages_dynamicprogramming(
         &tokenized_entries,
         context_length,
         bos_id,
@@ -126,6 +116,46 @@ fn process_entry(entry: &Value, tokenizer: &Tokenizer) -> Option<Vec<u32>> {
             .map(|encoding| encoding.get_ids().to_vec())
     })
 }
+
+// Function to combine tokenized messages using greedy approach
+fn combine_tokenized_messages_greedy(
+    tokenized_messages: &[Vec<u32>],
+    max_tokens: usize,
+    bos_id: u32,
+    eos_id: u32,
+    separator_id: u32,
+) -> Vec<Vec<u32>> {
+    let mut combined = Vec::new();
+    let mut current = Vec::with_capacity(max_tokens); // Pre-allocate maximum size
+
+    current.push(bos_id);
+
+    for message in tokenized_messages {
+        // Check if adding this message would exceed the max token limit
+        if current.len() + message.len() + 1 <= max_tokens { // +1 for separator
+            if current.len() > 1 { // If not the first message, add separator
+                current.push(separator_id);
+            }
+            current.extend_from_slice(message);
+        } else {
+            if current.len() > 1 { // Ensure we have more than just the BOS token
+                current.push(eos_id);
+                combined.push(current);
+            }
+            current = vec![bos_id];
+            current.extend_from_slice(message);
+        }
+    }
+
+    // Final message check
+    if current.len() > 1 {
+        current.push(eos_id);
+        combined.push(current);
+    }
+
+    combined
+}
+
 
 // Function to combine tokenized messages dynamically
 fn combine_tokenized_messages_dynamicprogramming(
@@ -187,47 +217,5 @@ fn combine_tokenized_messages_dynamicprogramming(
     }
 
     combined.reverse();
-    combined
-}
-
-fn combine_tokenized_messages_greedy(
-    tokenized_messages: &[Vec<u32>],
-    max_tokens: usize,
-    bos_id: u32,
-    eos_id: u32,
-    separator_id: u32,
-) -> Vec<Vec<u32>> {
-    let mut sorted_messages = tokenized_messages.to_vec();
-    sorted_messages.sort_by(|a, b| b.len().cmp(&a.len()));
-
-    let mut combined = Vec::new();
-    let mut current = vec![bos_id];
-
-    for message in sorted_messages {
-        // Check if adding this message would exceed the max token limit
-        if current.len() + message.len() + 1 <= max_tokens {
-            // +1 for separator
-            if current.len() > 1 {
-                // If not the first message, add separator
-                current.push(separator_id);
-            }
-            current.extend_from_slice(&message);
-        } else {
-            if current.len() > 1 {
-                // Ensure we have more than just the BOS token
-                current.push(eos_id);
-                combined.push(current);
-            }
-            current = vec![bos_id];
-            current.extend_from_slice(&message);
-        }
-    }
-
-    // Final message check
-    if current.len() > 1 {
-        current.push(eos_id);
-        combined.push(current);
-    }
-
     combined
 }
