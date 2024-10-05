@@ -99,10 +99,15 @@ fn fill_buckets(
             // don't add padding
             info!("No padding added");
 
-            // if the last token in the bucket is a seperator, remove it
-            if current_bucket.last() == Some(&seperator_id) {
-                current_bucket.pop();
-            }
+            // // if the last token in the bucket is a seperator, remove it
+            // if current_bucket.last() == Some(&seperator_id) {
+            //     current_bucket.pop();
+            // }
+        }
+
+        // if the last token in the bucket is a seperator, remove it
+        if current_bucket.last() == Some(&seperator_id) {
+            current_bucket.pop();
         }
 
         // Add the current bucket to the result bucket
