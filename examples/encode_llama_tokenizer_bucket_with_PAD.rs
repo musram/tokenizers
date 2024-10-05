@@ -8,6 +8,12 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 use tokenizers::Tokenizer;
+use log::{info, warn, error};
+use env_logger;
+
+fn init_logger() {
+    env_logger::init();
+}
 
 #[derive(Debug)]
 struct Document {
@@ -21,7 +27,7 @@ fn fill_buckets(
     padding_threshold: f64,
     pad_id: u32,
 ) -> (Vec<Vec<u32>>, usize, usize) {
-    println!("Starting fill_buckets function");
+    info!("Starting fill_buckets function");
 
     let mut result_bucket: Vec<Vec<u32>> = Vec::new();
     let original_docs_count = documents.len();
@@ -83,9 +89,9 @@ fn fill_buckets(
         result_bucket.push(current_bucket);
     }
 
-    println!("Fill_buckets completed");
-    println!("Number of training buckets: {}", result_bucket.len());
-    println!("Remaining documents: {}", documents.len());
+    info!("Fill_buckets completed");
+    info!("Number of training buckets: {}", result_bucket.len());
+    info!("Remaining documents: {}", documents.len());
 
     (result_bucket, original_docs_count, split_docs_count)
 }
@@ -93,7 +99,7 @@ fn fill_buckets(
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 6 {
-        eprintln!(
+        error!(
             "Usage: {} <input_files...> <output_dir> <context_length> <model_name> <num_workers>",
             args[0]
         );
@@ -133,7 +139,7 @@ fn process_jsonl_file(
     context_length: usize,
     tokenizer: Arc<Tokenizer>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    println!("Processing file: {}", input_file);
+    info!("Processing file: {}", input_file);
 
     let input_path = Path::new(input_file);
     let file_name = input_path.file_name().unwrap().to_str().unwrap();
@@ -172,27 +178,31 @@ fn process_jsonl_file(
     let padding_threshold = 0.1; // 10%
 
     let total_original_length: usize = documents.iter().map(|doc| doc.length).sum();
-    let (training_buckets, original_docs_count, split_docs_count) = fill_buckets(
-        &mut documents,
-        context_length,
-        padding_threshold,
-        pad_id,
-    );
+    let (training_buckets, original_docs_count, split_docs_count) =
+        fill_buckets(&mut documents, context_length, padding_threshold, pad_id);
 
-    println!("training_buckets filled");
+    info!("training_buckets filled");
 
     // Calculate ratios
-    let total_padding: usize = training_buckets.iter()
+    let total_padding: usize = training_buckets
+        .iter()
         .map(|bucket| bucket.iter().filter(|&&token| token == pad_id).count())
         .sum();
+
+    info!("Padding distribution:");
+    for (i, bucket) in training_buckets.iter().enumerate() {
+        let padding = bucket.iter().filter(|&&token| token == pad_id).count();
+        info!("Bucket length {}: {}", i, bucket.len());
+        info!("Bucket padding {}: {}", i, padding);
+    }
 
     let total_training_samples = training_buckets.len();
     let truncation_ratio = split_docs_count as f64 / original_docs_count as f64;
     let padding_ratio = total_padding as f64 / total_original_length as f64;
     let concatenation_ratio = original_docs_count as f64 / total_training_samples as f64;
 
-    println!("Total number of buckets: {}", training_buckets.len());
-    println!("Writing training_buckets to output file");
+    info!("Total number of buckets: {}", training_buckets.len());
+    info!("Writing training_buckets to output file");
 
     let output_file = File::create(output_file)?;
     let mut writer = BufWriter::new(output_file);
@@ -203,10 +213,10 @@ fn process_jsonl_file(
     }
 
     // Output bookkeeping metrics
-    println!("Padding Ratio (rpad): {}", padding_ratio);
-    println!("Truncation Ratio (rtru): {}", truncation_ratio);
-    println!("Concatenation Ratio (rcat): {}", concatenation_ratio);
-    println!("Processed {} and saved results", input_file);
+    info!("Padding Ratio (rpad): {}", padding_ratio);
+    info!("Truncation Ratio (rtru): {}", truncation_ratio);
+    info!("Concatenation Ratio (rcat): {}", concatenation_ratio);
+    info!("Processed {} and saved results", input_file);
     Ok(())
 }
 
