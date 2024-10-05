@@ -178,7 +178,6 @@ fn process_jsonl_file(
 
     let input_path = Path::new(input_file);
     let file_name = input_path.file_name().unwrap().to_str().unwrap();
-    let output_file = Path::new(output_dir).join(format!("processed_{}", file_name));
 
     let file = File::open(input_file)?;
     let reader = BufReader::new(file);
