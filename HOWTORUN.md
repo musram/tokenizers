@@ -13,7 +13,7 @@ ls -l target/release/examples/encode_llama_tokenizer_greedy_dp
 - run the binary
 
 ```bash
- target/release/examples/encode_llama_tokenizer_greedy_dp    ../data/sample_sc_50k.jsonl ../data/output_folder 2048    teknium/Llama-3.1-AlternateTokenizer 4
+target/release/examples/encode_llama_tokenizer_bucket_without_PAD   ../data ../data/output_folder 2048    teknium/Llama-3.1-AlternateTokenizer 4
 ```
 
 - run the program
