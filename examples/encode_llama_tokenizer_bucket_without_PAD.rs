@@ -247,9 +247,6 @@ fn process_jsonl_file(
     info!("Total number of buckets: {}", training_buckets.len());
     info!("Writing training_buckets to output file");
 
-    let output_file = File::create(output_file)?;
-    let mut writer = BufWriter::new(output_file);
-
     // Create directories if they don't exist
     let jsonl_dir = Path::new(output_dir).join("jsonl");
     let bin_dir = Path::new(output_dir).join("bin");
