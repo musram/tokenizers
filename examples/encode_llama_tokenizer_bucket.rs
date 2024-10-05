@@ -10,12 +10,6 @@ use std::time::Instant;
 use tokenizers::Tokenizer;
 
 #[derive(Debug)]
-struct Bucket {
-    capacity: usize,
-    remaining: usize,
-}
-
-#[derive(Debug)]
 struct Document {
     length: usize,
     content: Vec<u32>,
@@ -23,119 +17,77 @@ struct Document {
 
 fn fill_buckets(
     documents: &mut VecDeque<Document>,
-    buckets: &mut Vec<Bucket>,
+    bucket_size: usize,
     padding_threshold: f64,
     pad_id: u32,
-) -> Vec<Vec<u32>> {
+) -> (Vec<Vec<u32>>, usize, usize) {
     println!("Starting fill_buckets function");
-    println!("Initial number of documents: {}", documents.len());
-    println!("Initial number of buckets: {}", buckets.len());
-    println!("Padding threshold: {}", padding_threshold);
 
-    let mut training_buckets: Vec<Vec<u32>> = Vec::new();
+    let mut result_bucket: Vec<Vec<u32>> = Vec::new();
+    let original_docs_count = documents.len();
+    let mut split_docs_count = 0;
 
-    // Step 1: Sort documents by length in descending order
+    // Sort documents by length in descending order
     documents
         .make_contiguous()
         .sort_by(|a, b| b.length.cmp(&a.length));
-    println!("Documents sorted by length in descending order");
-    println!(
-        "Longest document length: {}",
-        documents.front().map_or(0, |d| d.length)
-    );
 
     while !documents.is_empty() {
-        let mut bucket = buckets.pop().unwrap();
-        println!("Processing new bucket with capacity: {}", bucket.capacity);
         let mut current_bucket: Vec<u32> = Vec::new();
+        let mut remaining_bucket_size = bucket_size;
 
-        // Step 4: For each document in D
-        while !documents.is_empty() {
-            let document = documents.front_mut().unwrap();
-            println!("Considering document of length: {}", document.length);
-
-            // Step 5: Check if the document fits into the current bucket
-            if document.length <= bucket.remaining {
-                println!("Adding entire document of length {}", document.length);
+        let i = 0;
+        while i < documents.len() {
+            let document = &documents[i];
+            if document.length <= remaining_bucket_size {
+                // If document fits in the bucket
                 current_bucket.extend_from_slice(&document.content);
-                bucket.remaining -= document.length;
-                documents.pop_front(); // Remove document from D
-                println!("Remaining space in bucket: {}", bucket.remaining);
-            } else if current_bucket.is_empty() {
-                // Step 7: If bucket is empty, add part of the document
-                println!("Adding part of document to empty bucket");
-                current_bucket.extend_from_slice(&document.content[0..bucket.remaining]);
-                document.content = document.content[bucket.remaining..].to_vec();
-                document.length -= bucket.remaining;
-                bucket.remaining = 0; // Bucket is now full
-                println!(
-                    "Bucket filled. Remaining document length: {}",
-                    document.length
-                );
+                remaining_bucket_size -= document.length;
+                documents.remove(i);
             } else {
-                // Break if the current document does not fit
-                println!("Document doesn't fit. Moving to next step.");
-                break;
+                // If document is too large, split the document
+                if current_bucket.is_empty() {
+                    // If the bucket is empty, truncate the document to fit
+                    current_bucket.extend_from_slice(&document.content[0..remaining_bucket_size]);
+                    let new_document = Document {
+                        length: document.length - remaining_bucket_size,
+                        content: document.content[remaining_bucket_size..].to_vec(),
+                    };
+                    documents[i] = new_document;
+                    split_docs_count += 1;
+                }
+                break; // Stop processing this bucket if a document doesn't fit
             }
         }
 
-        // Step 12: Calculate remaining space in the bucket
-        let remaining_space = bucket.capacity - current_bucket.len();
-        println!("Remaining space: {}", remaining_space);
-
-        // Step 13: Check padding condition
-        if (remaining_space as f64) / (bucket.capacity as f64) > padding_threshold {
-            println!("Remaining space exceeds padding threshold");
-            if let Some(shortest) = documents.iter_mut().min_by_key(|d| d.length) {
-                println!(
-                    "Taking from shortest document with length {}",
-                    shortest.length
-                );
-                let chunk_length = remaining_space.min(shortest.length);
-                current_bucket.extend_from_slice(&shortest.content[0..chunk_length]);
-                shortest.length -= chunk_length;
-                shortest.content = shortest.content[chunk_length..].to_vec();
+        // Handle remaining space in the bucket
+        let remaining_space = bucket_size - current_bucket.len();
+        if (remaining_space as f64) / (bucket_size as f64) > padding_threshold {
+            // If remaining space is significant, fill with part of the shortest document
+            if let Some(shortest) = documents.back_mut() {
+                let words_to_add = remaining_space.min(shortest.length);
+                current_bucket.extend_from_slice(&shortest.content[0..words_to_add]);
+                shortest.length -= words_to_add;
+                shortest.content = shortest.content[words_to_add..].to_vec();
 
                 if shortest.length == 0 {
-                    println!("Shortest document completely used, removing empty documents");
-                    let before = documents.len();
-                    documents.retain(|d| d.length > 0); // Remove empty documents
-                    let after = documents.len();
-                    println!("Removed {} empty documents", before - after);
+                    documents.pop_back();
                 }
-            } else {
-                println!("No suitable document found to fill the remaining space");
             }
         } else {
-            // Step 17: Fill remaining space with padding
-            println!("Filling remaining space with padding");
+            // Add padding if remaining space is not significant
             current_bucket.extend(vec![pad_id; remaining_space]);
         }
 
-        println!("Bucket filled, length: {}", current_bucket.len());
-        assert_eq!(
-            current_bucket.len(),
-            bucket.capacity,
-            "Bucket length mismatch"
-        );
-        training_buckets.push(current_bucket);
-    }
-
-    // Fill remaining buckets if any
-    while !buckets.is_empty() {
-        let bucket = buckets.pop().unwrap();
-        println!(
-            "Filling remaining bucket with capacity: {}",
-            bucket.capacity
-        );
-        let current_bucket = vec![pad_id; bucket.capacity];
-        training_buckets.push(current_bucket);
+        // Add the current bucket to the result bucket
+        result_bucket.push(current_bucket);
     }
 
     println!("Fill_buckets completed");
-    println!("Number of training buckets: {}", training_buckets.len());
+    println!("Number of training buckets: {}", result_bucket.len());
     println!("Remaining documents: {}", documents.len());
-    training_buckets
+
+    (result_bucket, original_docs_count, split_docs_count)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -217,36 +169,43 @@ fn process_jsonl_file(
     pb.finish_with_message(format!("Done processing in {:?}", total_time));
 
     let pad_id = tokenizer.token_to_id("[PAD]").unwrap_or(0);
-    let mut buckets = vec![Bucket {
-        capacity: context_length,
-        remaining: context_length,
-    }];
-
     let padding_threshold = 0.1; // 10%
 
-    let training_buckets = fill_buckets(&mut documents, &mut buckets, padding_threshold, pad_id);
+    let total_original_length: usize = documents.iter().map(|doc| doc.length).sum();
+    let (training_buckets, original_docs_count, split_docs_count) = fill_buckets(
+        &mut documents,
+        context_length,
+        padding_threshold,
+        pad_id,
+    );
 
     println!("training_buckets filled");
 
-    // Write training_buckets to output file
-    let output_file = File::create(output_file)?;
-    let mut writer = BufWriter::new(output_file);
+    // Calculate ratios
+    let total_padding: usize = training_buckets.iter()
+        .map(|bucket| bucket.iter().filter(|&&token| token == pad_id).count())
+        .sum();
 
-    println!("Writing training_buckets to output file");
-
-    // Print the number of tokens in each bucket
-    for (index, bucket) in training_buckets.iter().enumerate() {
-        println!("Bucket {}: {} tokens", index + 1, bucket.len());
-    }
+    let total_training_samples = training_buckets.len();
+    let truncation_ratio = split_docs_count as f64 / original_docs_count as f64;
+    let padding_ratio = total_padding as f64 / total_original_length as f64;
+    let concatenation_ratio = original_docs_count as f64 / total_training_samples as f64;
 
     println!("Total number of buckets: {}", training_buckets.len());
     println!("Writing training_buckets to output file");
+
+    let output_file = File::create(output_file)?;
+    let mut writer = BufWriter::new(output_file);
 
     for bucket in training_buckets {
         let json = serde_json::json!({"tokens": bucket});
         writeln!(writer, "{}", json.to_string())?;
     }
 
+    // Output bookkeeping metrics
+    println!("Padding Ratio (rpad): {}", padding_ratio);
+    println!("Truncation Ratio (rtru): {}", truncation_ratio);
+    println!("Concatenation Ratio (rcat): {}", concatenation_ratio);
     println!("Processed {} and saved results", input_file);
     Ok(())
 }
