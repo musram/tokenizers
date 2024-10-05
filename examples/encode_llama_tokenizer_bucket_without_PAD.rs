@@ -255,6 +255,8 @@ fn process_jsonl_file(
 
     // Write training_buckets to JSONL file
     info!("Writing training_buckets to JSONL file");
+
+    let file_name = format!("processed_{}", file_name.split('.').next().unwrap_or(file_name));
     let jsonl_file = jsonl_dir.join(format!("processed_{}.jsonl", file_name));
     let jsonl_output = File::create(jsonl_file)?;
     let mut jsonl_writer = BufWriter::new(jsonl_output);
