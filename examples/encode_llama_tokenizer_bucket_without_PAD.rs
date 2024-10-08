@@ -1,5 +1,7 @@
 use env_logger;
+use env_logger::Builder;
 use indicatif::{ProgressBar, ProgressStyle};
+use log::LevelFilter;
 use log::{error, info, warn};
 use rayon::prelude::*;
 use serde_json::Value;
@@ -12,7 +14,11 @@ use std::time::Instant;
 use tokenizers::Tokenizer;
 
 fn init_logger() {
-    env_logger::init();
+    let log_file = File::create("program_log.txt").unwrap();
+    Builder::new()
+        .target(env_logger::Target::Pipe(Box::new(log_file)))
+        .filter_level(LevelFilter::Info)
+        .init();
 }
 
 #[derive(Debug)]
@@ -43,35 +49,32 @@ fn fill_buckets(
         let mut remaining_bucket_size = bucket_size;
 
         let i = 0;
-        while i < documents.len() {
+        while i < documents.len() && remaining_bucket_size > 0 {
             let document = &documents[i];
-            if document.length <= remaining_bucket_size {
+            if document.length + 1 <= remaining_bucket_size {
+                // +1 for separator
                 // If document fits in the bucket
                 current_bucket.extend_from_slice(&document.content);
-
-                // add seperator
                 current_bucket.push(seperator_id);
 
-                // remaining bucket size minus seperator
-                remaining_bucket_size -= 1;
-
-                // remaining bucket size minus document length
-                remaining_bucket_size -= document.length;
+                remaining_bucket_size -= document.length + 1; // Subtract document length and separator
 
                 documents.remove(i);
             } else {
                 // If document is too large, split the document
                 if current_bucket.is_empty() {
-                    // If the bucket is empty, truncate the document to fit
-                    current_bucket.extend_from_slice(&document.content[0..remaining_bucket_size]);
+                    let space_for_content = remaining_bucket_size.saturating_sub(1); // Reserve space for separator
+                    current_bucket.extend_from_slice(&document.content[0..space_for_content]);
+                    current_bucket.push(seperator_id);
+
                     let new_document = Document {
-                        length: document.length - remaining_bucket_size,
-                        content: document.content[remaining_bucket_size..].to_vec(),
+                        length: document.length - space_for_content,
+                        content: document.content[space_for_content..].to_vec(),
                     };
                     documents[i] = new_document;
                     split_docs_count += 1;
                 }
-                break; // Stop processing this bucket if a document doesn't fit
+                break; // Stop processing this bucket
             }
         }
 
@@ -80,10 +83,8 @@ fn fill_buckets(
         if (remaining_space as f64) / (bucket_size as f64) > padding_threshold {
             // If remaining space is significant, fill with part of the shortest document
             if let Some(shortest) = documents.back_mut() {
-                let words_to_add = remaining_space.min(shortest.length);
+                let words_to_add = remaining_space.saturating_sub(1).min(shortest.length); // Reserve space for separator
                 current_bucket.extend_from_slice(&shortest.content[0..words_to_add]);
-
-                // add seperator
                 current_bucket.push(seperator_id);
 
                 shortest.length -= words_to_add;
@@ -94,21 +95,21 @@ fn fill_buckets(
                 }
             }
         } else {
-            // Add padding if remaining space is not significant
-            //current_bucket.extend(vec![pad_id; remaining_space]);
-            // don't add padding
             info!("No padding added");
-
-            // // if the last token in the bucket is a seperator, remove it
-            // if current_bucket.last() == Some(&seperator_id) {
-            //     current_bucket.pop();
-            // }
         }
 
-        // if the last token in the bucket is a seperator, remove it
+        // Remove trailing separator if present
         if current_bucket.last() == Some(&seperator_id) {
             current_bucket.pop();
         }
+
+        // Ensure the bucket size is not exceeded
+        debug_assert!(
+            current_bucket.len() <= bucket_size,
+            "Bucket size exceeded: {} > {}",
+            current_bucket.len(),
+            bucket_size
+        );
 
         // Add the current bucket to the result bucket
         result_bucket.push(current_bucket);
@@ -255,14 +256,21 @@ fn process_jsonl_file(
     // Write training_buckets to JSONL file
     info!("Writing training_buckets to JSONL file");
 
-    let file_name = format!("processed_{}", file_name.split('.').next().unwrap_or(file_name));
+    let file_name = format!(
+        "processed_{}",
+        file_name.split('.').next().unwrap_or(file_name)
+    );
     let jsonl_file = jsonl_dir.join(format!("processed_{}.jsonl", file_name));
     let jsonl_output = File::create(jsonl_file)?;
     let mut jsonl_writer = BufWriter::new(jsonl_output);
 
-    for bucket in &training_buckets {
-        let json = serde_json::json!({"tokens": bucket});
+    for (index, bucket) in training_buckets.iter().enumerate() {
+        let json = serde_json::json!({
+            "tokens": bucket,
+            "bucket_size": bucket.len()
+        });
         writeln!(jsonl_writer, "{}", json.to_string())?;
+        info!("Bucket {}: size {}", index, bucket.len());
     }
     jsonl_writer.flush()?;
 
