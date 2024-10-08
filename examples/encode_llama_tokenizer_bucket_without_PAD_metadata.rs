@@ -12,10 +12,37 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 use tokenizers::Tokenizer;
+use lazy_static::lazy_static;
+use std::collections::HashMap;
+
 
 const HDR_MAGIC: &[u8] = b"PACKED";
 const VERSION: u64 = 1;
-const HDR_SIZE: usize = 24; // 7 (magic) + 8 (version) + 8 (chunk size) + 1 (padding)
+const HDR_SIZE: usize = 25; // 7 (magic) + 8 (version) + 8 (chunk size)  + 1 (dtype code)
+const DTYPE_CODE: u8 = 2; // Assuming 2 represents the dtype code for u32
+
+
+
+lazy_static! {
+    static ref DTYPE_MAP: HashMap<&'static str, u8> = {
+        let mut m = HashMap::new();
+        m.insert("np.uint8", 1);
+        m.insert("np.int8", 2);
+        m.insert("np.int16", 3);
+        m.insert("np.int32", 4);
+        m.insert("np.int64", 5);
+        m.insert("np.float32", 6);
+        m.insert("np.float64", 7);
+        m.insert("np.uint16", 8);
+        m
+    };
+}
+
+fn get_dtype_code(dtype_str: &str) -> Option<u8> {
+    DTYPE_MAP.get(dtype_str).cloned()
+}
+
+
 
 fn init_logger() {
     let log_file = File::create("program_log.txt").unwrap();
@@ -130,19 +157,20 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     init_logger();
 
     let args: Vec<String> = std::env::args().collect();
-    if args.len() < 6 {
+    if args.len() < 7 {
         error!(
-            "Usage: {} <input_files...> <output_dir> <context_length> <model_name> <num_workers>",
+            "Usage: {} <input_files...> <output_dir> <context_length> <model_name> <num_workers> <dtype>",
             args[0]
         );
         std::process::exit(1);
     }
 
-    let input_dir = &args[args.len() - 5];
-    let output_dir = &args[args.len() - 4];
-    let context_length: usize = args[args.len() - 3].parse()?;
-    let model_name = &args[args.len() - 2];
-    let num_workers: usize = args[args.len() - 1].parse()?;
+    let input_dir = &args[args.len() - 6];
+    let output_dir = &args[args.len() - 5];
+    let context_length: usize = args[args.len() - 4].parse()?;
+    let model_name = &args[args.len() - 3];
+    let num_workers: usize = args[args.len() - 2].parse()?;
+    let dtype = &args[args.len() - 1];
 
     std::fs::create_dir_all(output_dir)?;
 
@@ -165,6 +193,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 input_file.to_str().unwrap(),
                 output_dir,
                 context_length,
+                dtype,
                 Arc::clone(&tokenizer),
             )
         })?;
@@ -177,6 +206,7 @@ fn process_jsonl_file(
     input_file: &str,
     output_dir: &str,
     context_length: usize,
+    dtype: &str,
     tokenizer: Arc<Tokenizer>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("Processing file: {}", input_file);
@@ -280,12 +310,14 @@ fn process_jsonl_file(
         HDR_SIZE + (training_buckets.len() * context_length * std::mem::size_of::<u32>());
     let mut memmap = memmap::MmapMut::map_anon(total_size)?;
 
+
+    let dtype_code = get_dtype_code(dtype).unwrap_or(DTYPE_CODE);   
     // Write header
     (&mut memmap[..HDR_MAGIC.len()]).copy_from_slice(HDR_MAGIC);
     (&mut memmap[HDR_MAGIC.len()..HDR_MAGIC.len() + 8]).copy_from_slice(&VERSION.to_le_bytes());
     (&mut memmap[HDR_MAGIC.len() + 8..HDR_MAGIC.len() + 16])
         .copy_from_slice(&(context_length as u64).to_le_bytes());
-    memmap[HDR_MAGIC.len() + 16] = 0; // padding byte
+    memmap[HDR_MAGIC.len() + 16] = dtype_code;
                                       // Write data
     for (i, bucket) in training_buckets.iter().enumerate() {
         let start = HDR_SIZE + (i * context_length * std::mem::size_of::<u32>());
