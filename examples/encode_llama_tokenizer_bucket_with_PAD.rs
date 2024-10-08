@@ -1,4 +1,8 @@
+use env_logger;
+use env_logger::Builder;
 use indicatif::{ProgressBar, ProgressStyle};
+use log::LevelFilter;
+use log::{error, info, warn};
 use rayon::prelude::*;
 use serde_json::Value;
 use std::collections::VecDeque;
@@ -8,11 +12,13 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 use tokenizers::Tokenizer;
-use log::{info, warn, error};
-use env_logger;
 
 fn init_logger() {
-    env_logger::init();
+    let log_file = File::create("program_log.txt").unwrap();
+    Builder::new()
+        .target(env_logger::Target::Pipe(Box::new(log_file)))
+        .filter_level(LevelFilter::Info)
+        .init();
 }
 
 #[derive(Debug)]

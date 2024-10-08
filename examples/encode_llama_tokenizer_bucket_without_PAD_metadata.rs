@@ -1,5 +1,7 @@
 use env_logger;
+use env_logger::Builder;
 use indicatif::{ProgressBar, ProgressStyle};
+use log::LevelFilter;
 use log::{error, info, warn};
 use rayon::prelude::*;
 use serde_json::Value;
@@ -16,7 +18,11 @@ const VERSION: u64 = 1;
 const HDR_SIZE: usize = 24; // 7 (magic) + 8 (version) + 8 (chunk size) + 1 (padding)
 
 fn init_logger() {
-    env_logger::init();
+    let log_file = File::create("program_log.txt").unwrap();
+    Builder::new()
+        .target(env_logger::Target::Pipe(Box::new(log_file)))
+        .filter_level(LevelFilter::Info)
+        .init();
 }
 
 #[derive(Debug)]

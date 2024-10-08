@@ -1,4 +1,6 @@
+use env_logger::Builder;
 use indicatif::{ProgressBar, ProgressStyle};
+use log::LevelFilter;
 use rayon::prelude::*;
 use serde_json::Value;
 use std::fs::File;
@@ -7,10 +9,18 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 use tokenizers::Tokenizer;
+
 // Add these new imports
 use lru::LruCache;
 use std::cell::RefCell;
 use std::num::NonZeroUsize;
+fn init_logger() {
+    let log_file = File::create("program_log.txt").unwrap();
+    Builder::new()
+        .target(env_logger::Target::Pipe(Box::new(log_file)))
+        .filter_level(LevelFilter::Info)
+        .init();
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let args: Vec<String> = std::env::args().collect();
