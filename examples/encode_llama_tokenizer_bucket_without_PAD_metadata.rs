@@ -1,10 +1,12 @@
 use env_logger;
 use env_logger::Builder;
 use indicatif::{ProgressBar, ProgressStyle};
+use lazy_static::lazy_static;
 use log::LevelFilter;
 use log::{error, info, warn};
 use rayon::prelude::*;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
@@ -12,16 +14,11 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 use tokenizers::Tokenizer;
-use lazy_static::lazy_static;
-use std::collections::HashMap;
 
-
-const HDR_MAGIC: &[u8] = b"PACKED";
+const HDR_MAGIC: &[u8] = b"PACKED"; // 6 bytes
 const VERSION: u64 = 1;
-const HDR_SIZE: usize = 25; // 7 (magic) + 8 (version) + 8 (chunk size)  + 1 (dtype code)
-const DTYPE_CODE: u8 = 2; // Assuming 2 represents the dtype code for u32
-
-
+const HDR_SIZE: usize = 24; // 6 (magic) + 8 (version) + 8 (chunk size)  + 1 (dtype code) + 1 (padding threshold)
+const DTYPE_CODE: u8 = 4; // Assuming 4 represents the dtype code for np.int32
 
 lazy_static! {
     static ref DTYPE_MAP: HashMap<&'static str, u8> = {
@@ -41,8 +38,6 @@ lazy_static! {
 fn get_dtype_code(dtype_str: &str) -> Option<u8> {
     DTYPE_MAP.get(dtype_str).cloned()
 }
-
-
 
 fn init_logger() {
     let log_file = File::create("program_log.txt").unwrap();
@@ -310,14 +305,14 @@ fn process_jsonl_file(
         HDR_SIZE + (training_buckets.len() * context_length * std::mem::size_of::<u32>());
     let mut memmap = memmap::MmapMut::map_anon(total_size)?;
 
-
-    let dtype_code = get_dtype_code(dtype).unwrap_or(DTYPE_CODE);   
+    let dtype_code = get_dtype_code(dtype).unwrap_or(DTYPE_CODE);
     // Write header
     (&mut memmap[..HDR_MAGIC.len()]).copy_from_slice(HDR_MAGIC);
     (&mut memmap[HDR_MAGIC.len()..HDR_MAGIC.len() + 8]).copy_from_slice(&VERSION.to_le_bytes());
     (&mut memmap[HDR_MAGIC.len() + 8..HDR_MAGIC.len() + 16])
         .copy_from_slice(&(context_length as u64).to_le_bytes());
     memmap[HDR_MAGIC.len() + 16] = dtype_code;
+    memmap[HDR_MAGIC.len() + 17] = 0; // Empty byte as pad
                                       // Write data
     for (i, bucket) in training_buckets.iter().enumerate() {
         let start = HDR_SIZE + (i * context_length * std::mem::size_of::<u32>());
