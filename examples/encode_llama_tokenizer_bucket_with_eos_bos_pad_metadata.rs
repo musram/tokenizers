@@ -238,10 +238,19 @@ fn process_jsonl_file(
     let total_time = start_time.elapsed();
     pb.finish_with_message(format!("Done processing in {:?}", total_time));
 
+
+    // Define special tokens for sentence seperator, padding, begin of text and end of text
     //let pad_id = tokenizer.token_to_id("[PAD]").unwrap_or(0);
     let seperator_id = tokenizer
         .token_to_id("<|reserved_special_token_2|>")
         .unwrap_or(0);
+        // Define special tokens
+    let bos_id = tokenizer.token_to_id("<|begin_of_text|>").unwrap_or(0);
+    let eos_id = tokenizer.token_to_id("<|end_of_text|>").unwrap_or(0);
+    let pad_id = tokenizer
+        .token_to_id("<|finetune_right_pad_id|>")
+        .unwrap_or(0);
+
 
     let padding_threshold = 0.1; // 10%
 
@@ -255,12 +264,6 @@ fn process_jsonl_file(
 
     info!("training_buckets filled");
 
-    // Define special tokens
-    let bos_id = tokenizer.token_to_id("<|begin_of_text|>").unwrap_or(0);
-    let eos_id = tokenizer.token_to_id("<|end_of_text|>").unwrap_or(0);
-    let pad_id = tokenizer
-        .token_to_id("<|reserved_special_token_2|>")
-        .unwrap_or(0);
 
     // Create new buckets with bos_id, eos_id and pad_id    
     let mut training_buckets_with_bos_eos = Vec::new();
