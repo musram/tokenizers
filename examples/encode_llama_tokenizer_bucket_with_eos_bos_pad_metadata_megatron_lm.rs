@@ -15,17 +15,14 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokenizers::Tokenizer;
 
-
-
 const HDR_MAGIC: &[u8] = b"MMIDIDX\x00\x00";
 const VERSION: u64 = 1;
 const DTYPE_CODE: u8 = 4; // Assuming 4 represents the dtype code for np.int32
-const HDR_SIZE: usize = 24; // 9 (magic) + 8 (version) + 1 (dtype code) 
-
 
 // [ HDR_MAGIC (9 bytes) ][ VERSION (8 bytes) ][ TYPE CODE (1 byte) ]
 // [ SIZES COUNT (8 bytes) ][ DOC INDICES COUNT (8 bytes) ]
 // [ SIZES ( 4 bytes) ] [ POINTERS (8 bytes) ] [ DOC INDICES (8 bytes) ]
+const HDR_SIZE: usize = 9 + 8 + 1 + 8 + 8;
 
 lazy_static! {
     static ref DTYPE_MAP: HashMap<&'static str, u8> = {
@@ -155,14 +152,13 @@ fn fill_buckets(
     (result_bucket, original_docs_count, split_docs_count)
 }
 
-
 // Helper function to get pointers with total
-fn get_pointers_with_total(sizes: &[u64], dtype_bytes: u8) -> (Vec<u64>, u64) {
-    let mut pointers: Vec<u64> = Vec::with_capacity(sizes.len());
+fn get_pointers_with_total(sizes_count: &u64, dtype_bytes: u8) -> (Vec<u64>, u64) {
+    let mut pointers: Vec<u64> = Vec::with_capacity(*sizes_count as usize);
     let mut cumulative_sum = 0;
-    for &size in sizes {
+    for _ in 0..*sizes_count {
         pointers.push(cumulative_sum * dtype_bytes as u64);
-        cumulative_sum += size as u64;
+        cumulative_sum += 1;
     }
     let total_bytes = cumulative_sum * dtype_bytes as u64;
     (pointers, total_bytes)
@@ -258,19 +254,17 @@ fn process_jsonl_file(
     let total_time = start_time.elapsed();
     pb.finish_with_message(format!("Done processing in {:?}", total_time));
 
-
     // Define special tokens for sentence seperator, padding, begin of text and end of text
     //let pad_id = tokenizer.token_to_id("[PAD]").unwrap_or(0);
     let seperator_id = tokenizer
         .token_to_id("<|reserved_special_token_2|>")
         .unwrap_or(0);
-        // Define special tokens
+    // Define special tokens
     let bos_id = tokenizer.token_to_id("<|begin_of_text|>").unwrap_or(0);
     let eos_id = tokenizer.token_to_id("<|end_of_text|>").unwrap_or(0);
     let pad_id = tokenizer
         .token_to_id("<|finetune_right_pad_id|>")
         .unwrap_or(0);
-
 
     let padding_threshold = 0.1; // 10%
 
@@ -284,8 +278,7 @@ fn process_jsonl_file(
 
     info!("training_buckets filled");
 
-
-    // Create new buckets with bos_id, eos_id and pad_id    
+    // Create new buckets with bos_id, eos_id and pad_id
     let mut training_buckets_with_bos_eos = Vec::new();
     // Add the bos_id to the beginning of each bucket, eos_id to the end of each bucket and pad_id to the rest if the bucket is less than context_length  bucket is equal to context_length then remove the last token and add the eos_id
     for mut bucket in training_buckets {
@@ -301,7 +294,7 @@ fn process_jsonl_file(
     }
 
     // Calculate ratios
-   
+
     let total_padding: usize = training_buckets_with_bos_eos
         .iter()
         .map(|bucket| bucket.iter().filter(|&&token| token == pad_id).count())
@@ -319,7 +312,10 @@ fn process_jsonl_file(
     let padding_ratio = total_padding as f64 / total_original_length as f64;
     let concatenation_ratio = original_docs_count as f64 / total_training_samples as f64;
 
-    info!("Total number of buckets: {}", training_buckets_with_bos_eos.len());
+    info!(
+        "Total number of buckets: {}",
+        training_buckets_with_bos_eos.len()
+    );
     info!("Writing training_buckets to output file");
 
     // Create directories if they don't exist
@@ -346,19 +342,26 @@ fn process_jsonl_file(
     jsonl_writer.flush()?;
 
     info!("Writing training_buckets to numpy.memmap file in megatron format");
-    
+
     let dtype_bytes = get_dtype_code(dtype).unwrap_or(DTYPE_CODE);
 
+    let size_count_bytes: usize = 8;
+    let doc_idx_bytes: usize = 8;
+    let pointer_bytes: usize = 8;
+    let doc_count_bytes: usize = 8;
+    let sizes_bytes: usize = 4;
+
     let memmap_file = bin_dir.join(format!("processed_{}.memmap", file_name));
+
     // Get the sizes of each bucket
-    let _sizes: Vec<u32> = training_buckets_with_bos_eos
+    let sizes: Vec<u32> = training_buckets_with_bos_eos
         .iter()
         .map(|bucket| bucket.len() as u32)
         .collect();
 
-    let sizes_count: u64 = _sizes.iter().map(|&size| size as u64).sum();
+    let sizes_count: u64 = sizes.iter().map(|&size| size as u64).sum();
 
-    let _doc_idx: Vec<u64> = training_buckets_with_bos_eos
+    let doc_idx: Vec<u64> = training_buckets_with_bos_eos
         .iter()
         .scan(0, |acc, bucket| {
             *acc += bucket.len() as u64;
@@ -366,12 +369,20 @@ fn process_jsonl_file(
         })
         .collect();
 
-    let doc_count:u64 = _doc_idx.len() as u64;
+    let doc_count: u64 = doc_idx.len() as u64;
 
     let (pointers, total_bytes) = get_pointers_with_total(&sizes_count, DTYPE_CODE);
 
     // HDR_SIZE + sizes * dtype_bytes + doc_count * 8 + pointers.len() * 8
-    let total_bytes: u64 = HDR_SIZE as u64 + (sizes_count * dtype_bytes as u64) + (doc_count * 8) + (pointers.len() as u64 * 8);
+    let sizes_bytes: u64 = sizes
+        .iter()
+        .map(|&size| size as u64 * dtype_bytes as u64)
+        .sum();
+
+    let doc_idx_bytes: u64 = doc_idx.len() as u64 * 8;
+
+    let total_bytes: u64 =
+        HDR_SIZE as u64 + sizes_bytes + doc_idx_bytes + (pointers.len() as u64 * 8);
 
     let mut memmap = memmap::MmapMut::map_anon(total_bytes as usize)?;
 
@@ -381,39 +392,58 @@ fn process_jsonl_file(
     memmap[HDR_MAGIC.len() + 8] = dtype_bytes;
 
     // Write sizes count
-    (&mut memmap[HDR_MAGIC.len() + 9..HDR_MAGIC.len() + 17]).copy_from_slice(&(sizes_count).to_le_bytes());
+    (&mut memmap[HDR_MAGIC.len() + 9..HDR_MAGIC.len() + 17])
+        .copy_from_slice(&(sizes_count).to_le_bytes());
 
     // Write doc indices count
-    (&mut memmap[HDR_MAGIC.len() + 17..HDR_MAGIC.len() + 25]).copy_from_slice(&(doc_count).to_le_bytes());
+    (&mut memmap[HDR_MAGIC.len() + 17..HDR_MAGIC.len() + 25])
+        .copy_from_slice(&(doc_count).to_le_bytes());
 
     // Write sizes
-    for (i, size) in _sizes.iter().enumerate() {
-        (&mut memmap[HDR_SIZE + i * 4..HDR_SIZE + (i + 1) * 4]).copy_from_slice(&size.to_le_bytes());
+    let sizes_start = HDR_SIZE;
+
+    for (i, size) in sizes.iter().enumerate() {
+        let start = sizes_start + i * 4; // Use 4 bytes for each size (u32)
+        let end = start + 4;
+        (&mut memmap[start..end]).copy_from_slice(&size.to_le_bytes());
     }
 
     // write pointers
+    let pointers_start = HDR_SIZE + (sizes_count as usize * 4) + 8;
     for (i, pointer) in pointers.iter().enumerate() {
-        let start = HDR_SIZE + (sizes_count * 4) + (i * 8);
+        let start = pointers_start + (i * 8);
         let end = start + 8;
         (&mut memmap[start..end]).copy_from_slice(&pointer.to_le_bytes());
     }
 
     // write doc indices
-    for (i, doc_idx) in _doc_idx.iter().enumerate() {
-        let start = HDR_SIZE + (sizes_count * 4) + (pointers.len() * 8) + (i * 8);
+    let doc_idx_start = HDR_SIZE
+        + (sizes_count as usize * 8)
+        + (pointers.len() * 8)
+        + 8;
+    for (i, &doc_idx_value) in doc_idx.iter().enumerate() {
+        let start = doc_idx_start + (i * 8);
         let end = start + 8;
-        (&mut memmap[start..end]).copy_from_slice(&doc_idx.to_le_bytes());
+        if end <= memmap.len() {
+            (&mut memmap[start..end]).copy_from_slice(&(doc_idx_value as u64).to_le_bytes());
+        } else {
+            warn!("Doc index {} exceeds allocated memory. Skipping.", i);
+            break;
+        }
     }
 
-    let start_data = HDR_SIZE + (sizes_count * 4) + (pointers.len() * 8) + (doc_count * 8);
+    let data_start = HDR_SIZE
+        + (sizes_count as usize * 8)
+        + (pointers.len() * 8)
+        + (doc_count as usize * 8);
 
     // write data
     for (i, bucket) in training_buckets_with_bos_eos.iter().enumerate() {
-        let start = HDR_SIZE + (i * context_length * std::mem::size_of::<u32>());
+        let start = data_start + (i * bucket.len() * dtype_bytes as usize);
 
         // Ensure the number of tokens to write is within the bounds
         let num_tokens = bucket.len().min(context_length);
-        let end = start + (num_tokens * std::mem::size_of::<u32>());
+        let end = start + (num_tokens * dtype_bytes as usize);
 
         if end > memmap.len() {
             warn!("Bucket {} exceeds allocated memory. Truncating.", i);
@@ -439,11 +469,6 @@ fn process_jsonl_file(
     // Persist the memmap to disk
     memmap.flush()?;
     std::fs::write(&memmap_file, &memmap)?;
-
-
-   
-
-    
 
     // info!("Writing training_buckets to numpy.memmap file");
     // let memmap_file = bin_dir.join(format!("processed_{}.memmap", file_name));
