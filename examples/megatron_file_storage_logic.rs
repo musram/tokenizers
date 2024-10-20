@@ -366,8 +366,9 @@ mod tests {
         index.write(&[1, 2, 3], &[0, 1, 3])?;
 
         // Reopen the file to read its contents
+        let mut index_file = File::open(index_path)?;
         let mut index_buffer = Vec::new();
-        index.file.read_to_end(&mut index_buffer)?;
+        index_file.read_to_end(&mut index_buffer)?;
 
         // Check header
         assert_eq!(&index_buffer[0..9], HDR_MAGIC);
@@ -375,8 +376,13 @@ mod tests {
         assert_eq!(index_buffer[17], dtype_code.size());
 
         // Check sizes count
-        let sizes_count = u64::from_le_bytes(index_buffer[18..26].try_into().unwrap());
-        println!("sizes_count: {}", sizes_count);
+        println!("index_buffer[18..26]: ");
+        let sizes_count = match u64::from_le_bytes(index_buffer[18..26].try_into().unwrap()) {
+            count => {
+                println!("sizes_count: {}", count);
+                count
+            }
+        };
         assert_eq!(sizes_count, 3, "Sizes count doesn't match");
 
         Ok(())
