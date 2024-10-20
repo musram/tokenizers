@@ -23,3 +23,9 @@ pip-wheel-metadata
 
 .vscode
 *.code-workspace
+
+
+test_data.bin
+test_dataset.bin
+test_index.bin
+test_index.idx

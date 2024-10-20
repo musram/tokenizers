@@ -10,6 +10,10 @@ use tempfile::tempdir;
 const HDR_MAGIC: &[u8] = b"MMIDIDX\x00\x00";
 const VERSION: u64 = 1;
 
+// [ HDR_MAGIC (9 bytes) ][ VERSION (8 bytes) ][ TYPE CODE (1 byte) ]
+// [ SIZES COUNT (8 bytes) ][ DOC INDICES COUNT (8 bytes) ]
+// [ SIZES ( 4 bytes) ] [ POINTERS (8 bytes) ] [ DOC INDICES (8 bytes) ]
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum DataType {
     Int32,
@@ -158,6 +162,11 @@ impl Index {
             self.file.write_all(&(size as u32).to_le_bytes())?;
         }
 
+        let (pointers, _) = get_pointers_with_total(sizes, self.dtype_bytes);
+        for &pointer in &pointers {
+            self.file.write_all(&(pointer as u64).to_le_bytes())?;
+        }
+
         for &doc in doc_idx {
             self.file.write_all(&(doc as u64).to_le_bytes())?;
         }
@@ -174,6 +183,8 @@ impl Index {
         // Implementation to read doc_idx from the file
         unimplemented!()
     }
+
+    
 }
 
 // Helper function for exclusive scan
@@ -203,7 +214,7 @@ fn get_pointers_with_total(sizes: &[usize], dtype_bytes: u8) -> (Vec<usize>, usi
 mod tests {
     use super::*;
     use std::convert::TryInto;
-    use std::io::Seek;
+    use std::io::{Read, Seek, SeekFrom};
     use tempfile::tempdir;
 
     #[test]
@@ -384,6 +395,128 @@ mod tests {
             }
         };
         assert_eq!(sizes_count, 3, "Sizes count doesn't match");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_complete_mmap_indexed_dataset() -> io::Result<()> {
+        let dir = tempdir()?;
+        let data_path = dir.path().join("test_data.bin");
+        let index_path = dir.path().join("test_index.idx");
+
+        // Create and populate the dataset
+        let dtype = "np.32";
+        let dtype_code = DataType::from_str(dtype);
+        let dtype_bytes = dtype_code.size();
+        let mut builder =
+            MMapIndexedDatasetBuilder::new(data_path.to_str().unwrap(), dtype_code.clone())?;
+
+        // Add items
+        builder.add_item(&[1, 2, 3])?;
+        builder.add_item(&[4, 5])?;
+        builder.end_document();
+        builder.add_item(&[6, 7, 8, 9])?;
+        builder.end_document();
+
+        builder.finalize(index_path.to_str().unwrap())?;
+
+        // Now, let's verify the contents
+        // 1. Check the data file
+        let mut data_file = File::open(&data_path)?;
+        let mut data_buffer = Vec::new();
+        data_file.read_to_end(&mut data_buffer)?;
+
+        assert_eq!(data_buffer.len(), 36); // 9 * 4 bytes (i32)
+        let expected_data = vec![1i32, 2, 3, 4, 5, 6, 7, 8, 9]
+            .into_iter()
+            .flat_map(|x| x.to_le_bytes().to_vec())
+            .collect::<Vec<u8>>();
+        assert_eq!(data_buffer, expected_data, "Data file content mismatch");
+
+        // 2. Check the index file
+        let mut index_file = File::open(&index_path)?;
+        let mut index_buffer = Vec::new();
+        index_file.read_to_end(&mut index_buffer)?;
+
+        // Check header
+        assert_eq!(&index_buffer[0..9], HDR_MAGIC, "Header magic mismatch");
+        assert_eq!(
+            u64::from_le_bytes(index_buffer[9..17].try_into().unwrap()),
+            VERSION,
+            "Version mismatch"
+        );
+        assert_eq!(
+            index_buffer[17],
+            dtype_bytes,
+            "Data type size mismatch"
+        );
+
+        // Check sizes and doc_idx counts
+        let sizes_count = u64::from_le_bytes(index_buffer[18..26].try_into().unwrap());
+        let doc_idx_count = u64::from_le_bytes(index_buffer[26..34].try_into().unwrap());
+        assert_eq!(sizes_count, 3, "Sizes count mismatch");
+        assert_eq!(doc_idx_count, 3, "Doc idx count mismatch");
+
+        // Check sizes
+        let sizes_start = 34;
+        let sizes = (0..3)
+            .map(|i| {
+                u32::from_le_bytes(
+                    index_buffer[sizes_start + i * dtype_bytes as usize..sizes_start + (i + 1) * dtype_bytes as usize]
+                        .try_into()
+                        .unwrap(),
+                ) as usize
+            })
+            .collect::<Vec<usize>>();
+        assert_eq!(sizes, vec![3, 2, 4], "Sizes mismatch");
+
+        // Check doc_idx
+        let doc_idx_start = sizes_start + 3 * 4;
+        let doc_idx = (0..3)
+            .map(|i| {
+                u64::from_le_bytes(
+                    index_buffer[doc_idx_start + i * 8..doc_idx_start + (i + 1) * 8]
+                        .try_into()
+                        .unwrap(),
+                ) as usize
+            })
+            .collect::<Vec<usize>>();
+        assert_eq!(doc_idx, vec![0, 5, 9], "Doc idx mismatch");
+
+        // 3. Verify we can read the data correctly
+        let mut data_file = File::open(&data_path)?;
+        let mut buffer = vec![0u8; 4];
+
+        // Check first tensor
+        data_file.seek(SeekFrom::Start(0))?;
+        for &expected in &[1, 2, 3] {
+            data_file.read_exact(&mut buffer)?;
+            assert_eq!(
+                i32::from_le_bytes(buffer.clone().try_into().unwrap()),
+                expected
+            );
+        }
+
+        // Check second tensor
+        data_file.seek(SeekFrom::Start(3 * 4))?;
+        for &expected in &[4, 5] {
+            data_file.read_exact(&mut buffer)?;
+            assert_eq!(
+                i32::from_le_bytes(buffer.clone().try_into().unwrap()),
+                expected
+            );
+        }
+
+        // Check third tensor
+        data_file.seek(SeekFrom::Start(5 * 4))?;
+        for &expected in &[6, 7, 8, 9] {
+            data_file.read_exact(&mut buffer)?;
+            assert_eq!(
+                i32::from_le_bytes(buffer.clone().try_into().unwrap()),
+                expected
+            );
+        }
 
         Ok(())
     }
