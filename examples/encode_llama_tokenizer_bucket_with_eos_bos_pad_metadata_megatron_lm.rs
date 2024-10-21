@@ -517,9 +517,6 @@ fn process_jsonl_file(
     for (i, pointer) in pointers.iter().enumerate() {
         let start = pointers_start + (i as u64) * 8;
         let end = start + 8;
-        println!("start: {}", start);
-        println!("end: {}", end);
-        println!("pointer: {}", pointer);
         (&mut index_memmap[start as usize..end as usize]).copy_from_slice(&pointer.to_le_bytes());
     }
 
