@@ -39,14 +39,6 @@ lazy_static! {
     };
 }
 
-fn index_file_path(prefix_path: &str) -> String {
-    return format!("{}.idx", prefix_path);
-}
-
-fn data_file_path(prefix_path: &str) -> String {
-    return format!("{}.bin", prefix_path);
-}
-
 fn get_dtype_code(dtype_str: &str) -> Option<u8> {
     DTYPE_MAP.get(dtype_str).cloned()
 }
