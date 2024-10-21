@@ -183,12 +183,10 @@ impl Index {
         // Implementation to read doc_idx from the file
         unimplemented!()
     }
-
-    
 }
 
 // Helper function for exclusive scan
-fn exscan_from_cumsum(arr: &mut [usize]) {
+fn exscan_from_cumsum(arr: &mut [u64]) {
     if arr.len() > 1 {
         arr.copy_within(0..arr.len() - 1, 1);
     }
@@ -197,16 +195,22 @@ fn exscan_from_cumsum(arr: &mut [usize]) {
     }
 }
 
-// Helper function to get pointers with total
-fn get_pointers_with_total(sizes: &[usize], dtype_bytes: u8) -> (Vec<usize>, usize) {
-    let mut pointers: Vec<usize> = Vec::with_capacity(sizes.len());
-    let mut cumulative_sum = 0;
+fn get_pointers_with_total(sizes: &Vec<u32>, dtype_bytes: u8) -> (Vec<u64>, u64) {
+    let mut pointers: Vec<u64> = Vec::with_capacity(sizes.len());
+    let mut cumulative_sum: u64 = 0;
+
+    // Calculate cumulative sizes in bytes
     for &size in sizes {
-        pointers.push(cumulative_sum * dtype_bytes as usize);
-        cumulative_sum += size;
+        cumulative_sum += size as u64 * dtype_bytes as u64;
+        pointers.push(cumulative_sum);
     }
-    let total_bytes = cumulative_sum * dtype_bytes as usize;
-    (pointers, total_bytes)
+
+    let total_bytes = cumulative_sum;
+
+    // Convert inclusive cumulative sums to exclusive
+    exscan_from_cumsum(&mut pointers);
+
+    (pointers, total_bytes as u64)
 }
 
 // Tests
@@ -446,11 +450,7 @@ mod tests {
             VERSION,
             "Version mismatch"
         );
-        assert_eq!(
-            index_buffer[17],
-            dtype_bytes,
-            "Data type size mismatch"
-        );
+        assert_eq!(index_buffer[17], dtype_bytes, "Data type size mismatch");
 
         // Check sizes and doc_idx counts
         let sizes_count = u64::from_le_bytes(index_buffer[18..26].try_into().unwrap());
@@ -463,7 +463,8 @@ mod tests {
         let sizes = (0..3)
             .map(|i| {
                 u32::from_le_bytes(
-                    index_buffer[sizes_start + i * dtype_bytes as usize..sizes_start + (i + 1) * dtype_bytes as usize]
+                    index_buffer[sizes_start + i * dtype_bytes as usize
+                        ..sizes_start + (i + 1) * dtype_bytes as usize]
                         .try_into()
                         .unwrap(),
                 ) as usize
