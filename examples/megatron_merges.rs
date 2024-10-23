@@ -155,13 +155,6 @@ impl MMapIndexedDatasetBuilder {
 
         let (sizes, pointers, doc_idx) = self.read_index(another_file_path)?;
 
-        println!(
-            "Read index: {} sizes, {} pointers, {} doc_idx for {}",
-            sizes.len(),
-            pointers.len(),
-            doc_idx.len(),
-            another_file_path
-        );
         info!(
             "Read index: {} sizes, {} pointers, {} doc_idx",
             sizes.len(),
@@ -174,9 +167,12 @@ impl MMapIndexedDatasetBuilder {
 
         self.sizes.extend(sizes);
 
+        // adjust the pointers to account for the dtype size
         let total_size = last_pointer + last_size * self.dtype_code as u64;
-        let adjusted_pointers: Vec<u64> =
-            pointers.iter().map(|&ptr| ptr + total_size as u64).collect();
+        let adjusted_pointers: Vec<u64> = pointers
+            .iter()
+            .map(|&ptr| ptr + total_size as u64)
+            .collect();
         self.pointers.extend(adjusted_pointers);
 
         let doc_count = self.doc_idx.len() as u64;
@@ -442,10 +438,12 @@ fn main() -> io::Result<()> {
     let output_path = Path::new(output_dir).join(output_file_name);
     // Finalize and write the output index file
     info!("Finalizing and writing output index file and data file");
-    builder.finalize(output_path.to_str().unwrap()).map_err(|e| {
-        error!("Failed to finalize and write output index file: {}", e);
-        e
-    })?;
+    builder
+        .finalize(output_path.to_str().unwrap())
+        .map_err(|e| {
+            error!("Failed to finalize and write output index file: {}", e);
+            e
+        })?;
 
     info!(
         "Merge process completed successfully. Processed {} files.",
@@ -742,7 +740,7 @@ mod tests {
         let (sizes, pointers, doc_idx) = reader.read_index(output_path.to_str().unwrap())?;
 
         assert_eq!(sizes, vec![1, 5, 10]); // Sizes
-        assert_eq!(pointers, vec![0, 4, 9 ]); // Pointers
+        assert_eq!(pointers, vec![0, 4, 9]); // Pointers
         assert_eq!(doc_idx, vec![0, 1, 6]); // Document indices should be adjusted
 
         Ok(())

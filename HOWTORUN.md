@@ -56,6 +56,18 @@ should be /home/xxxxx/softwares/programs/rust_projects/tokenizers/
 python3 examples/validate_megatron_data.py
 ```
 
+-- Compile merges
+
+```bash
+cargo build --example megatron_merges
+```
+
+-- Run the merges
+
+```bash
+target/release/examples/megatron_merges ../data/output_folder/merges np.int32 ../data/output_folder/bin  merge 
+```
+
 - test the merges
 
 ```bash
