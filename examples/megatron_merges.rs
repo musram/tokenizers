@@ -174,8 +174,9 @@ impl MMapIndexedDatasetBuilder {
 
         self.sizes.extend(sizes);
 
-        let total_size = last_pointer + last_size;
-        let adjusted_pointers: Vec<u64> = pointers.iter().map(|&ptr| ptr + total_size).collect();
+        let total_size = last_pointer + last_size * self.dtype_code as u64;
+        let adjusted_pointers: Vec<u64> =
+            pointers.iter().map(|&ptr| ptr + total_size as u64).collect();
         self.pointers.extend(adjusted_pointers);
 
         let doc_count = self.doc_idx.len() as u64;
@@ -601,7 +602,7 @@ mod tests {
         let (sizes, pointers, doc_idx) = reader.read_index(output_path.to_str().unwrap())?;
 
         assert_eq!(sizes, vec![3, 4, 2, 5, 1, 3]); // Sizes
-        assert_eq!(pointers, vec![0, 3, 7, 9, 14, 15]); // Pointers
+        assert_eq!(pointers, vec![0, 3, 19, 21, 41, 42]); // Pointers
         assert_eq!(doc_idx, vec![0, 2, 2, 4, 4, 5]); // Document indices
 
         let merged_data = std::fs::read(format!("{}.bin", output_path.to_str().unwrap()))?;
@@ -702,7 +703,7 @@ mod tests {
         let (sizes, pointers, doc_idx) = reader.read_index(output_path.to_str().unwrap())?;
 
         assert_eq!(sizes, vec![3, 4, 2, 5]); // Sizes
-        assert_eq!(pointers, vec![0, 3, 7, 9]); // Pointers
+        assert_eq!(pointers, vec![0, 3, 19, 21]); // Pointers
         assert_eq!(doc_idx, vec![0, 1, 3, 4]); // Document indices should be adjusted
 
         Ok(())
@@ -741,7 +742,7 @@ mod tests {
         let (sizes, pointers, doc_idx) = reader.read_index(output_path.to_str().unwrap())?;
 
         assert_eq!(sizes, vec![1, 5, 10]); // Sizes
-        assert_eq!(pointers, vec![0, 1, 6]); // Pointers
+        assert_eq!(pointers, vec![0, 4, 9 ]); // Pointers
         assert_eq!(doc_idx, vec![0, 1, 6]); // Document indices should be adjusted
 
         Ok(())
@@ -785,7 +786,7 @@ mod tests {
         let (sizes, pointers, doc_idx) = reader.read_index(output_path.to_str().unwrap())?;
 
         assert_eq!(sizes, vec![1000, 2000]); // Sizes
-        assert_eq!(pointers, vec![0, 1000]); // Pointers
+        assert_eq!(pointers, vec![0, 4000]); // Pointers
         assert_eq!(doc_idx, vec![0, 1]); // Document indices
 
         Ok(())
