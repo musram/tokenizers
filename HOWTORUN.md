@@ -3,7 +3,9 @@
 ```bash
 cd tokenizers
 ```
+
 This should be /home/xxxxx/softwares/programs/rust_projects/tokenizers/tokenizers
+
 ```bash
 pwd
 ```
@@ -38,17 +40,24 @@ cargo run --release --example encode_llama_tokenizer_bucket_with_eos_bos_pad_met
 sudo perf record --call-graph dwarf    target/release/examples/encode_llama_tokenizer_bucket_with_eos_bos_pad_metadata_megatron_lm    ../data/sample_sc_50k.jsonl ../data/output_folder 2048    teknium/Llama-3.1-AlternateTokenizer 4 np.int32
 ```
 
-
 - validate the output
 
 ```bash
 cd tokenizers
 ```
+
 ```bash
 pwd
 ```
+
 should be /home/xxxxx/softwares/programs/rust_projects/tokenizers/
 
 ```bash
 python3 examples/validate_megatron_data.py
+```
+
+- test the merges
+
+```bash
+cargo test --example megatron_merges
 ```

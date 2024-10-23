@@ -93,6 +93,6 @@ env_logger = "0.10.0"  # Use the latest version available
 lto = "fat"
 
 [[example]]
-name = "megatron_sample"
-path = "examples/megatron_sample.rs"
+name = "megatron_merges"
+path = "examples/megatron_merges.rs"
 

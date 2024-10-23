@@ -118,6 +118,9 @@ def read_and_validate_mmap_file(index_path, data_path, doc_id=None, skip_warmup=
 # Example call
 if __name__ == "__main__":
     print(os.getcwd())
-    index_path = "data/output_folder/bin/processed_processed_sample_sc_50k.idx" # Replace with your actual file path
-    data_path = "data/output_folder/bin/processed_processed_sample_sc_50k.bin" # Replace with your actual file path
+    # index_path = "data/output_folder/bin/processed_processed_sample_sc_50k.idx" # Replace with your actual file path
+    # data_path = "data/output_folder/bin/processed_processed_sample_sc_50k.bin" # Replace with your actual file path
+    index_path = "data/output_folder/merges/merge.idx" # Replace with your actual file path
+    data_path = "data/output_folder/merges/merge.bin" # Replace with your actual file path
+
     read_and_validate_mmap_file(index_path, data_path)
